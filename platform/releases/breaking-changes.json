@@ -524,6 +524,18 @@
       "changedSeams": [
         "app.config.ts"
       ]
+    },
+    {
+      "version": "3.0.0",
+      "previous": "2.0.2",
+      "supportedBaseline": ">=2.0.0 <4.0.0",
+      "codemods": [],
+      "migrations": [],
+      "env": [],
+      "removedFiles": [],
+      "renamedExports": [],
+      "dependencyFloors": [],
+      "changedSeams": []
     }
   ]
 }
