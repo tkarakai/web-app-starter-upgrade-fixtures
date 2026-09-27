@@ -510,6 +510,20 @@
       "renamedExports": [],
       "dependencyFloors": [],
       "changedSeams": []
+    },
+    {
+      "version": "2.0.2",
+      "previous": "2.0.1",
+      "supportedBaseline": ">=2.0.0 <3.0.0",
+      "codemods": [],
+      "migrations": [],
+      "env": [],
+      "removedFiles": [],
+      "renamedExports": [],
+      "dependencyFloors": [],
+      "changedSeams": [
+        "app.config.ts"
+      ]
     }
   ]
 }
