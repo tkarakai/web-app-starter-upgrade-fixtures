@@ -1,0 +1,40 @@
+name: Deploy Production
+
+# App-owned caller. The checks live in the platform's reusable workflow
+# (platform-cd-production.yml, replaced on platform upgrade); edit the triggers here.
+
+run-name: "Deploy production ${{ inputs.git_sha }} [ops:${{ inputs.request_id || github.run_id }}]"
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Correlation ID supplied by the ops CLI
+        type: string
+        required: false
+      git_sha:
+        description: "Git SHA to deploy (must have been deployed to staging)"
+        required: true
+        type: string
+      confirm:
+        description: "Type 'deploy-production' to confirm"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+  deployments: write
+  statuses: write
+  id-token: write
+  attestations: write
+
+jobs:
+  deploy:
+    name: Platform
+    uses: ./.github/workflows/platform-cd-production.yml
+    secrets: inherit
+    with:
+      request_id: ${{ inputs.request_id }}
+      git_sha: ${{ inputs.git_sha }}
+      confirm: ${{ inputs.confirm }}

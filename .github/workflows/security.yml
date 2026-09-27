@@ -1,0 +1,23 @@
+name: Security
+
+# App-owned caller. The checks live in the platform's reusable workflow
+# (platform-security.yml, replaced on platform upgrade); edit the triggers here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, v2]
+  schedule:
+    # Weekly, Mondays at 02:00 UTC
+    - cron: "0 2 * * 1"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  platform:
+    name: Platform
+    uses: ./.github/workflows/platform-security.yml

@@ -1,0 +1,48 @@
+name: Rollback Deployment
+
+# App-owned caller. The checks live in the platform's reusable workflow
+# (platform-cd-rollback.yml, replaced on platform upgrade); edit the triggers here.
+
+run-name: "Rollback ${{ inputs.target_sha }} [ops:${{ inputs.request_id || github.run_id }}]"
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Correlation ID supplied by the ops CLI
+        type: string
+        required: false
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      target_sha:
+        description: "Git SHA to rollback to (must have been previously deployed)"
+        required: true
+        type: string
+      confirm:
+        description: "Type 'rollback-staging' or 'rollback-production' to confirm"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+  deployments: write
+  statuses: write
+  id-token: write
+  attestations: write
+
+jobs:
+  rollback:
+    name: Platform
+    uses: ./.github/workflows/platform-cd-rollback.yml
+    secrets: inherit
+    with:
+      request_id: ${{ inputs.request_id }}
+      environment: ${{ inputs.environment }}
+      target_sha: ${{ inputs.target_sha }}
+      confirm: ${{ inputs.confirm }}

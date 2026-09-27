@@ -1,0 +1,27 @@
+name: CI Storybook
+
+# App-owned caller. The checks live in the platform's reusable workflow
+# (platform-ci-storybook.yml, replaced on platform upgrade); edit the triggers here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, v2]
+
+jobs:
+  platform:
+    name: Platform
+    uses: ./.github/workflows/platform-ci-storybook.yml
+
+  # The required status check (branch rules name it).
+  complete:
+    name: CI Storybook Complete
+    needs: [platform]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the platform workflow to pass
+        run: |
+          echo "Platform CI Storybook: ${{ needs.platform.result }}"
+          [[ "${{ needs.platform.result }}" == "success" ]]

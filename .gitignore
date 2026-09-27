@@ -1,0 +1,83 @@
+node_modules
+.bun
+.next
+next-env.d.ts
+out
+dist
+.turbo
+
+.env
+.env.*
+!.env.example
+
+*.log
+.DS_Store
+.dev-pids
+.dev-processes.json
+.dev-processes-*
+*.tsbuildinfo
+
+# Generated shared assets (copied by platform/tooling/copy-shared-assets.sh)
+apps/*/public/icon.svg
+apps/*/public/apple-touch-icon.png
+apps/*/public/favicon.ico
+platform/apps/*/public/icon.svg
+platform/apps/*/public/apple-touch-icon.png
+platform/apps/*/public/favicon.ico
+
+# Test coverage reports
+**/qa/coverage/
+
+# Playwright
+**/qa/playwright-report/
+**/blob-report/
+**/qa/test-results/
+**/qa/e2e/__screenshots__/
+
+# Local starter upgrade plans/logs (CI retains evidence as artifacts)
+apps/*/.starter-upgrade/
+platform/apps/*/.starter-upgrade/
+platform/packages/starter-sidebar-policy/dist/
+
+# Built package bytes are intentional, immutable inputs to the demo and its tests.
+!apps/demo/starter-packages/sidebar-policy/dist/
+!apps/demo/qa/fixtures/starter-releases/*/starter-packages/sidebar-policy/dist/
+
+# Local CI artifacts
+.act-artifacts/
+.ci-local-artifacts/
+
+# Staging setup records and logs (contain secrets)
+.infra-setup-staging-record-*
+.infra-setup-staging-log-*
+
+# Local Backpass files
+.backpass/
+.backpassrc.json
+
+# Local, per-checkout agent instructions (Claude Code and Codex)
+CLAUDE.local.md
+AGENTS.override.md
+
+# Auto Claude data directory
+.auto-claude/
+
+# Auto Claude generated files
+.auto-claude-security.json
+.auto-claude-status
+.claude_settings.json
+.worktrees/
+.security-key
+logs/security/
+
+.vercel
+
+# Operator-specific project mappings
+ops.config.json
+
+# Trusted CI workflow tooling checkout
+.ops-workflow/
+
+# Local ops sessions and exported observations
+*.session.json
+.ops-reports/

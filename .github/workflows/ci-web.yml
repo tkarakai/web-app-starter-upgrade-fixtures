@@ -1,0 +1,25 @@
+name: CI Web
+
+# App-owned caller. The checks live in the platform's reusable workflow
+# (platform-ci-web.yml, replaced on platform upgrade); edit the triggers here.
+
+on:
+  pull_request:
+    branches: [main, v2]
+
+jobs:
+  platform:
+    name: Platform
+    uses: ./.github/workflows/platform-ci-web.yml
+
+  # The required status check (branch rules name it).
+  complete:
+    name: CI Web Complete
+    needs: [platform]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the platform workflow to pass
+        run: |
+          echo "Platform CI Web: ${{ needs.platform.result }}"
+          [[ "${{ needs.platform.result }}" == "success" ]]

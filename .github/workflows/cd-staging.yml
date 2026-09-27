@@ -1,0 +1,44 @@
+name: Deploy Staging
+
+# App-owned caller. The checks live in the platform's reusable workflow
+# (platform-cd-staging.yml, replaced on platform upgrade); edit the triggers here.
+
+run-name: "Deploy staging ${{ inputs.git_sha || github.sha }} [ops:${{ inputs.request_id || github.run_id }}]"
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Correlation ID supplied by the ops CLI
+        type: string
+        required: false
+      git_sha:
+        description: Full source SHA to test and deploy (defaults to workflow SHA)
+        type: string
+        required: false
+      force_deploy:
+        description: 'Deploy all apps regardless of change detection'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: read
+  deployments: write
+  statuses: write
+  id-token: write
+  attestations: write
+
+jobs:
+  deploy:
+    name: Platform
+    uses: ./.github/workflows/platform-cd-staging.yml
+    secrets: inherit
+    with:
+      request_id: ${{ inputs.request_id }}
+      git_sha: ${{ inputs.git_sha }}
+      force_deploy: ${{ inputs.force_deploy == true }}

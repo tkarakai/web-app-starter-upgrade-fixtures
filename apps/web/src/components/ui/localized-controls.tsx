@@ -1,0 +1,53 @@
+"use client";
+
+import type { ComponentProps, ReactElement } from "react";
+import { useTranslations } from "next-intl";
+import {
+  Breadcrumb as BaseBreadcrumb,
+  DialogContent as BaseDialogContent,
+  TimezoneSelector as BaseTimezoneSelector,
+  CURATED_TIMEZONES,
+  Sidebar as BaseSidebar,
+  SidebarRail as BaseSidebarRail,
+  SidebarTrigger as BaseSidebarTrigger,
+} from "@web-app-starter/design-system";
+
+// Shared primitives accept labels; the app supplies its current locale.
+export { CopyableField, StyledQrCode, OtpInput, PasskeyUnsupportedAlert, PasswordInput } from "@web-app-starter/auth-ui";
+
+
+export function DialogContent(props: ComponentProps<typeof BaseDialogContent>): ReactElement {
+  const t = useTranslations("common");
+  return <BaseDialogContent closeLabel={t("close")} {...props} />;
+}
+
+export function Sidebar(props: ComponentProps<typeof BaseSidebar>): ReactElement {
+  const t = useTranslations("common");
+  return <BaseSidebar labels={{ title: t("navigation"), description: t("navigation"), close: t("close") }} {...props} />;
+}
+
+export function SidebarRail(props: ComponentProps<typeof BaseSidebarRail>): ReactElement {
+  const t = useTranslations("common");
+  return <BaseSidebarRail aria-label={t("resizeSidebar")} title={t("resizeSidebar")} {...props} />;
+}
+
+export function SidebarTrigger(props: ComponentProps<typeof BaseSidebarTrigger>): ReactElement {
+  const t = useTranslations("common");
+  return <BaseSidebarTrigger aria-label={t("toggleSidebar")} {...props} />;
+}
+
+export function Breadcrumb(props: ComponentProps<typeof BaseBreadcrumb>): ReactElement {
+  const t = useTranslations("common");
+  return <BaseBreadcrumb aria-label={t("breadcrumb")} {...props} />;
+}
+
+
+export function TimezoneSelector(props: ComponentProps<typeof BaseTimezoneSelector>): ReactElement {
+  const t = useTranslations("timezones");
+  const tc = useTranslations("common");
+  const groups = CURATED_TIMEZONES.map((group) => ({
+    region: t(`regions.${group.region}`),
+    zones: group.zones.map((zone) => ({ ...zone, label: t(`zones.${zone.value}`) })),
+  }));
+  return <BaseTimezoneSelector groups={groups} daylightSavingLabel={tc("daylightSaving")} {...props} />;
+}

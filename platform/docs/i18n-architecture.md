@@ -1,0 +1,838 @@
+# i18n Architecture
+
+This document describes the internationalization (i18n) system architecture. It covers the library choice, routing strategy, translation file structure, component usage patterns, formatting, ICU messages, backend error codes, language selector, locale detection, RTL support, cross-device persistence, and SEO optimization.
+
+## Overview
+
+The system uses **[next-intl](https://next-intl.dev) v4+** as the core i18n library, purpose-built for Next.js App Router and Server Components. All user-facing strings are extracted into a shared `@web-app-starter/i18n` package. The system currently supports **15 languages** across LTR and RTL scripts, with full support for cross-device locale persistence, SEO optimization, multi-script fonts, and RTL layout mirroring. Adding a new language requires only two steps — no code changes.
+
+### Scope
+
+**Scope:** web, landing and landing-static localize their user-visible text.
+Admin remains English-only and imports platform entries from
+`@web-app-starter/i18n/messages/en.json` where applicable (never app namespaces); it does not
+need locale routing.
+The product name is not translated content: it is `identity.productName` in the
+root `app.config.ts`. Messages that mention it take it as the `{productName}`
+argument (`t("intro", { productName })`), so renaming the product touches no locale
+file; a test fails if a catalog contains the name.
+
+`bun run check:i18n` (CI runs it) checks key parity of the platform and app files, namespace
+ownership and stale overrides (see "Message ownership" below).
+`apps/web/qa/tests/message-catalogues.test.ts` checks every shipped catalog, as merged, for ICU
+syntax and matching interpolation parameters. Run it through `bun run --cwd apps/web test`.
+The web app's `localized-controls.tsx` and `@web-app-starter/auth-ui` supply current-locale labels to shared
+primitives without making the design system depend on i18n. The static landing
+404 reads its URL locale after hydration because static hosting serves one
+`404.html`; its initial HTML uses the English catalog.
+
+---
+
+## Message ownership: platform and app files
+
+Each top-level namespace has exactly one owner, and the loader merges them at request time
+(`loadMessages(locale)` in `platform/packages/i18n/src/messages.ts`, used by
+`@web-app-starter/i18n/request`):
+
+| File | Owner | Holds |
+|---|---|---|
+| `platform/packages/i18n/messages/<locale>.json` | Platform (never edited in an app) | `common`, `theme`, `language`, `offline`, `auth`, `accountSecurity`, `errors`, `passwordStrength`, `forbidden`, `timezones`, in all 15 supported locales |
+| `packages/messages/<locale>.json` (`@repo/messages`) | App | The app's namespaces: in the reference apps `metadata`, `landing`, `legal`, `dashboard`, `projects`, `tasks`, `uploads`, `sampleErrors`. Needed only for the locales the app ships |
+| `packages/messages/overrides.json` | App | App wording for platform strings: `{ "<locale>": { "<platform namespace>": { ... } } }`, deep-merged over the platform's messages, one string at a time |
+
+- **Adding an app string touches no platform file**: it goes into the app's own namespace in
+  `packages/messages/` (the `platform-add-strings` skill).
+- **Locale subset.** `i18n.locales` in `app.config.ts` lists the locales the apps ship (a subset of
+  `allLocales` that includes `en`); routing, the language selector and the checks follow it. The
+  platform keeps translating its own strings into all 15.
+- **Validation** (`bun run check:i18n`, `platform/tooling/check-i18n.ts`): platform files match the
+  English keys; every shipped locale has an app file with the app's English keys; no app
+  namespace has a platform namespace's name; every override names an existing platform string in
+  a shipped locale. A stale override (the platform renamed or removed the key, usually in an
+  upgrade) is reported with its path; at runtime it would be ignored.
+- **Merging is pure** (`@web-app-starter/i18n/merge`: `mergeMessages`, `deepMerge`,
+  `namespaceClashes`, `staleOverrides`), so tests and tools share it. Component tests render with
+  both catalogues: `{ ...platformFr, ...appFr }`.
+
+---
+
+## Package Structure
+
+```
+platform/packages/i18n/                     # @web-app-starter/i18n
+├── src/
+│   ├── index.ts                   # Re-exports config types and utilities
+│   ├── config.ts                  # Supported locales, the app's subset, metadata, RTL detection
+│   ├── messages.ts                # loadMessages(): platform + app (@repo/messages) + overrides
+│   ├── merge.ts                   # Pure merge and validation helpers
+│   ├── request.ts                 # next-intl getRequestConfig() for server
+│   └── navigation.ts             # Typed Link, redirect, usePathname, useRouter
+├── messages/
+│   └── <locale>.json              # Platform namespaces, 15 locales (en is the source of truth)
+├── package.json
+└── tsconfig.json
+```
+
+### Package Exports
+
+| Export Path | Contents |
+|-------------|----------|
+| `@web-app-starter/i18n` | `allLocales`, `locales` (the app's subset), `defaultLocale`, `localeMetadata`, `getLocaleDirection`, `selectLocales`, `Locale` type, merge helpers |
+| `@web-app-starter/i18n/messages` | `loadMessages(locale)`, `platformMessages` |
+| `@web-app-starter/i18n/merge` | `mergeMessages`, `deepMerge`, `namespaceClashes`, `staleOverrides` (no imports; safe in tools) |
+| `@web-app-starter/i18n/request` | Server-side request configuration for next-intl |
+| `@web-app-starter/i18n/navigation` | `Link`, `redirect`, `usePathname`, `useRouter`, `getPathname` |
+| `@web-app-starter/i18n/messages/*` | Direct access to the platform's JSON message files (app files: `@repo/messages/*.json`) |
+
+---
+
+## Locale Configuration
+
+### `platform/packages/i18n/src/config.ts`
+
+```ts
+export const locales = ["en"] as const;
+export const defaultLocale = "en" as const;
+export type Locale = (typeof locales)[number];
+
+export const localeMetadata: Record<Locale, { name: string; nativeName: string; dir: "ltr" | "rtl" }> = {
+  en: { name: "English", nativeName: "English", dir: "ltr" },
+};
+
+const rtlLocales = new Set(["ar", "he", "fa", "ur"]);
+
+export function getLocaleDirection(locale: string): "ltr" | "rtl" {
+  return rtlLocales.has(locale) ? "rtl" : "ltr";
+}
+```
+
+The `locales` array is the single source of truth. All routing, middleware, and static generation derive from it.
+
+---
+
+## Routing
+
+### URL Pattern
+
+All routes include a locale prefix. There is no unprefixed default.
+
+| App | Example URLs |
+|-----|-------------|
+| Landing | `/en`, `/fr`, `/ar` |
+| Web (auth) | `/en/sign-in`, `/en/sign-up` |
+| Web (dashboard) | `/en/dashboard` |
+
+### Navigation Primitives
+
+`platform/packages/i18n/src/navigation.ts` creates locale-aware replacements for Next.js navigation:
+
+```ts
+import { createNavigation } from "next-intl/navigation";
+
+export const { Link, redirect, usePathname, useRouter, getPathname } =
+  createNavigation({ locales, defaultLocale, localePrefix: "always" });
+```
+
+Use these instead of `next/link` and `next/navigation` to ensure locale is always preserved in URLs.
+
+### File System Layout
+
+Both apps nest all pages under a `[locale]` dynamic segment:
+
+```
+apps/web/src/app/
+├── [locale]/
+│   ├── layout.tsx              # Root layout with NextIntlClientProvider
+│   ├── page.tsx                # Redirect to /[locale]/dashboard
+│   ├── (auth)/
+│   │   ├── layout.tsx
+│   │   ├── sign-in/page.tsx
+│   │   └── sign-up/page.tsx
+│   └── (dashboard)/
+│       ├── layout.tsx
+│       └── dashboard/
+│           ├── page.tsx
+│           └── dashboard-client.tsx
+└── api/                        # API routes (no locale segment)
+
+apps/landing/src/app/
+├── [locale]/
+│   ├── layout.tsx
+│   └── page.tsx
+```
+
+---
+
+## Middleware Composition
+
+next-intl's middleware is composed with the existing auth proxy and CSP header middleware. The composition order differs between apps.
+
+### Web App (`apps/web/src/proxy.ts`)
+
+```
+Request
+  → Strip locale prefix, detect locale from path
+  → Auth checks (cookie-based):
+      - Unauthenticated + protected route → redirect to /{locale}/sign-in
+      - Authenticated + auth page → redirect to /{locale}/dashboard
+  → next-intl middleware (locale detection, URL rewriting, cookie)
+  → CSP headers (nonce-based)
+  → Response
+```
+
+Auth redirects preserve the active locale by extracting it from the URL path before redirecting.
+
+### Landing apps
+
+`landing` and `landing-static` are static exports (`output: "export"`), so they have no proxy. Every
+locale is pre-rendered under `[locale]/`, and the root page picks a locale in the browser.
+
+### next-intl Middleware Configuration
+
+The web app uses this configuration:
+
+```ts
+import createIntlMiddleware from "next-intl/middleware";
+import { locales, defaultLocale } from "@web-app-starter/i18n";
+
+const intlMiddleware = createIntlMiddleware({
+  locales,
+  defaultLocale,
+  localePrefix: "always",
+});
+```
+
+---
+
+## Provider Setup
+
+### Root Layout Pattern
+
+Each app's `[locale]/layout.tsx` follows the same pattern:
+
+```tsx
+import { NextIntlClientProvider } from "next-intl";
+import { getMessages } from "next-intl/server";
+import { getLocaleDirection } from "@web-app-starter/i18n";
+
+export async function generateStaticParams() {
+  return locales.map((locale) => ({ locale }));
+}
+
+export default async function LocaleLayout({ children, params }) {
+  const { locale } = await params;
+  const messages = await getMessages();
+  const dir = getLocaleDirection(locale);
+
+  return (
+    <html lang={locale} dir={dir} suppressHydrationWarning>
+      <body>
+        <NextIntlClientProvider messages={messages}>
+          {children}
+        </NextIntlClientProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+Key aspects:
+- `generateStaticParams()` pre-renders all locale routes
+- `lang` and `dir` attributes are set dynamically on `<html>`
+- `NextIntlClientProvider` makes translations available to all client components
+- Messages are loaded server-side via `getMessages()` and passed to the provider
+
+### Request Configuration
+
+Each app has a thin `src/i18n/request.ts` file that re-exports the shared config:
+
+```ts
+export { default } from "@web-app-starter/i18n/request";
+```
+
+This is referenced by the next-intl plugin in `next.config.ts`:
+
+```ts
+import createNextIntlPlugin from "next-intl/plugin";
+const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
+export default withNextIntl(nextConfig);
+```
+
+---
+
+## Translation Usage
+
+### Server Components
+
+Use `getTranslations()` from `next-intl/server` (async):
+
+```tsx
+import { getTranslations } from "next-intl/server";
+import { appConfig } from "@web-app-starter/app-config";
+
+export default async function SignInPage() {
+  const t = await getTranslations("auth.signIn");
+
+  return (
+    <div>
+      <h1>{t("pageHeading")}</h1>
+      <p>{appConfig.identity.productName}</p>
+    </div>
+  );
+}
+```
+
+### Client Components
+
+Use `useTranslations()` hook from `next-intl`:
+
+```tsx
+"use client";
+import { useTranslations } from "next-intl";
+
+export function TaskList() {
+  const t = useTranslations("tasks");
+  const tc = useTranslations("common");
+
+  return (
+    <div>
+      <h2>{t("title")}</h2>
+      <p>{t("progress", { doneCount: 3, totalCount: 5 })}</p>
+      <button>{tc("save")}</button>
+    </div>
+  );
+}
+```
+
+### Shared Package Components (Inversion of Control)
+
+Components in `@web-app-starter/design-patterns` cannot access `NextIntlClientProvider` context. They accept translated strings as props with English fallback defaults:
+
+```tsx
+// platform/packages/design-patterns/src/theme-toggle.tsx
+const defaultLabels = {
+  light: "Light theme",
+  system: "System theme",
+  dark: "Dark theme",
+  aria: "Theme: {label}. Click to switch.",
+};
+
+interface ThemeToggleProps {
+  labels?: { light: string; system: string; dark: string; aria: string };
+}
+
+export function ThemeToggle({ labels }: ThemeToggleProps) {
+  const l = labels ?? defaultLabels;
+  // ...
+}
+```
+
+Consumer provides translations:
+
+```tsx
+const tt = useTranslations("theme");
+
+<ThemeToggle labels={{
+  light: tt("light"),
+  system: tt("system"),
+  dark: tt("dark"),
+  aria: tt("ariaLabel"),
+}} />
+```
+
+This pattern keeps shared packages locale-agnostic while allowing full translation.
+
+---
+
+## Translation File Structure
+
+Translations are split by owner (see "Message ownership"): platform namespaces in `platform/packages/i18n/messages/<locale>.json`, app namespaces in `packages/messages/<locale>.json`. Merged, English is organized by domain namespace:
+
+```json
+{
+  "common":    { "loading", "cancel", "save", "saving", "create", "creating", "delete", "signOut", "error" },
+  "theme":     { "light", "system", "dark", "ariaLabel" },
+  "language":  { "label", "ariaLabel" },
+  "auth":      { "signIn": {...}, "signUp": {...}, "fields": {...}, "errors": {...}, "badge", "footer", "working" },
+  "landing":   { "badge", "heading", "description", "getStarted", "signIn" },
+  "dashboard": { "projects", "tabs": {...}, "noProjects", "noProjectsDescription", ... },
+  "projects":  { "newProject", "editProject", "deleteConfirmTitle", "deleteConfirmDescription", "fields": {...} },
+  "tasks":     { "title", "addTask", "status": {...}, "fields": {...}, "aria": {...}, "progress", "count" },
+  "uploads":   { "title", "addFile", "uploading", "errors": {...}, "count" },
+  "errors":    { "NOT_AUTHENTICATED", "convex": { "rateLimited", "notAuthenticated", "connectionLost", "serverError" } },
+  "sampleErrors": { "projectNotFound", "taskNotFound", "fileNotFound", "fileTooLarge", "uploadNotFound" },
+  "metadata":  { "description" }
+}
+```
+
+### Naming Conventions
+
+| Pattern | Example | When to use |
+|---------|---------|-------------|
+| Flat key | `"title": "Tasks"` | Simple labels |
+| Nested namespace | `"auth.signIn.title"` | Domain-grouped strings |
+| With interpolation | `"deleteConfirmDescription": "...delete \"{name}\"..."` | Dynamic values |
+| ICU plural | `"{count, plural, =0 {No tasks} one {# task} other {# tasks}}"` | Countable items |
+
+---
+
+## ICU Message Format
+
+next-intl uses ICU MessageFormat syntax natively for plurals, variables, and select expressions.
+
+### Variable Interpolation
+
+```json
+{ "progress": "{doneCount} of {totalCount} tasks done" }
+```
+
+```tsx
+t("progress", { doneCount: 3, totalCount: 5 }); // "3 of 5 tasks done"
+```
+
+### Plurals
+
+```json
+{ "count": "{count, plural, =0 {No tasks yet} one {# task} other {# tasks}}" }
+```
+
+```tsx
+t("count", { count: 0 }); // "No tasks yet"
+t("count", { count: 1 }); // "1 task"
+t("count", { count: 5 }); // "5 tasks"
+```
+
+### Select (for enums/gender)
+
+```json
+{ "greeting": "{gender, select, male {He} female {She} other {They}} updated the project." }
+```
+
+---
+
+## Backend Error Handling
+
+### Error Code Pattern
+
+Backend (Convex) functions throw error codes as plain UPPER_SNAKE_CASE strings, keeping the backend completely locale-agnostic:
+
+```ts
+// packages/backend/convex/platform/functions.ts
+throw new Error("NOT_AUTHENTICATED");
+throw new Error("PROJECT_NOT_FOUND");
+
+// packages/backend/convex/tasks.ts
+throw new Error("TASK_NOT_FOUND");
+
+// packages/backend/convex/files.ts
+throw new Error("FILE_NOT_FOUND");
+throw new Error("FILE_TOO_LARGE");
+throw new Error("UPLOAD_NOT_FOUND");
+```
+
+### Client-Side Error Mapping
+
+`ConvexErrorToast` (`@web-app-starter/auth-ui`) turns Convex error codes into toasts. The platform's
+codes (`RATE_LIMITED`, `NOT_AUTHENTICATED`, `CONNECTION_LOST`, `SERVER_ERROR`) map to
+`errors.convex.*`; the app passes its own codes as `appErrorKeys`, mapped to keys in its own
+namespaces (`apps/web/src/lib/app-error-keys.ts`):
+
+```ts
+export const APP_ERROR_KEYS = {
+  PROJECT_NOT_FOUND: "sampleErrors.projectNotFound",
+  TASK_NOT_FOUND:    "sampleErrors.taskNotFound",
+  // ...
+};
+// <ConvexErrorToast appErrorKeys={APP_ERROR_KEYS} />
+```
+
+Components that handle an error themselves look the key up the same way:
+
+```tsx
+import { errorMessageKey } from "@web-app-starter/auth-ui";
+
+const t = useTranslations();
+const key = errorMessageKey(code, APP_ERROR_KEYS) ?? "errors.convex.serverError";
+toast.error(t(key));
+```
+
+---
+
+## Language Selector
+
+### Component Design
+
+`LanguageSelector` lives in `@web-app-starter/design-patterns` as a pure presentation component with no i18n dependency:
+
+```tsx
+interface LanguageSelectorProps {
+  currentLocale: string;
+  locales: { code: string; nativeName: string }[];
+  onSelect: (locale: string) => void;
+  ariaLabel?: string;
+  className?: string;
+}
+```
+
+- Renders a native `<select>` with a Globe icon
+- Displays each language in its native name
+- Returns `null` when only one locale is available (hides itself)
+- Consumer handles navigation on select
+
+### Placement
+
+| Location | Component | Integration |
+|----------|-----------|-------------|
+| Landing page | `SiteHeader` | Header bar with logo + language selector |
+| Auth pages (sign-in, sign-up) | `LocaleSwitcher` | Positioned in the page header |
+| Dashboard sidebar | `LocaleSwitcher` | Inside user profile dropdown menu, above ThemeToggle |
+
+### LocaleSwitcher Wrapper
+
+`LocaleSwitcher` (`@web-app-starter/auth-ui`, `platform/packages/auth-ui/src/components/locale-switcher.tsx`) wraps `LanguageSelector` with navigation logic:
+
+```tsx
+"use client";
+import { useLocale } from "next-intl";
+import { usePathname, useRouter } from "next/navigation";
+import { LanguageSelector } from "@web-app-starter/design-patterns";
+import { locales, localeMetadata, type Locale } from "@web-app-starter/i18n";
+
+export function LocaleSwitcher({ className }: { className?: string }) {
+  const locale = useLocale();
+  const pathname = usePathname();
+  const router = useRouter();
+
+  const handleLocaleChange = (newLocale: string) => {
+    const segments = pathname.split("/");
+    segments[1] = newLocale;
+    router.push(segments.join("/") || `/${newLocale}`);
+  };
+
+  return (
+    <LanguageSelector
+      currentLocale={locale}
+      locales={locales.map((code) => ({
+        code,
+        nativeName: localeMetadata[code as Locale].nativeName,
+      }))}
+      onSelect={handleLocaleChange}
+    />
+  );
+}
+```
+
+The navigation works by replacing the locale segment (first path segment) in the current URL.
+
+---
+
+## Locale Detection & Persistence
+
+### Detection Priority (via next-intl middleware)
+
+1. **URL path** — `/fr/dashboard` → French
+2. **User profile** (authenticated only, Convex) — cross-device persistence
+3. **Cookie** (`NEXT_LOCALE`) — persists explicit language choice
+4. **Accept-Language header** — browser preference
+5. **Default locale** — English
+
+### Persistence Strategy
+
+The system uses a **three-tier sync** approach for authenticated users:
+
+#### For Unauthenticated Users
+
+When a user selects a language:
+1. The `LocaleSwitcher` navigates to the new locale URL
+2. next-intl middleware automatically sets the `NEXT_LOCALE` cookie
+3. Subsequent visits remember the choice via localStorage fallback
+
+#### For Authenticated Users (Cross-Device Sync)
+
+The `useProfileSync` hook keeps the Convex user profile and localStorage in step. The Convex value wins.
+
+**How it works:**
+
+1. User logs in → profile is created with `locale` field in Convex
+2. User changes language → `LocaleSwitcher` saves to both localStorage and Convex (`setLocale` mutation)
+3. User signs out and back in → profile is loaded, Convex locale overwrites localStorage
+4. User on another device → logs in, Convex locale is loaded and synced to localStorage
+5. User opens app in another tab → BroadcastChannel shares the locale change instantly
+
+**Hook placement:** Called from `DashboardClient` (authenticated dashboard area) to ensure both Convex and i18n contexts are available.
+
+---
+
+## RTL Support
+
+RTL layout is fully supported with the following implementation:
+
+1. **Detects RTL locales** via `getLocaleDirection()` — pre-configured for Arabic, Hebrew, Farsi, Urdu
+2. **Sets `dir` attribute** on `<html>` dynamically in each app's root layout
+3. **CSS logical properties** replace physical directional classes throughout:
+   - `left-*` / `right-*` → `start-*` / `end-*`
+   - `ml-*` / `mr-*` → `ms-*` / `me-*`
+   - `pl-*` / `pr-*` → `ps-*` / `pe-*`
+   - `text-left` / `text-right` → `text-start` / `text-end`
+4. **Tailwind CSS v4** handles automatic mirroring based on `dir` attribute
+
+### Font Strategy
+
+Conditional font loading for multi-script support:
+
+- **Arabic** (`ar`) — [Cairo](https://fonts.google.com/specimen/Cairo) font with Arabic script
+- **Hebrew** (`he`) — [Heebo](https://fonts.google.com/specimen/Heebo) font with Hebrew script
+- **Other locales** — [Raleway](https://fonts.google.com/specimen/Raleway) (default, optimized for Latin)
+
+Font selection is configured per-locale in the root layout:
+
+```tsx
+const fontsByLocale: Record<string, ReturnType<typeof Cairo>> = {
+  ar: cairo,
+  he: heebo,
+};
+
+export default async function LocaleLayout({ children, params }) {
+  const { locale } = await params;
+  const font = fontsByLocale[locale] || raleway;
+
+  return <html className={font.variable}>{/* ... */}</html>;
+}
+```
+
+All fonts use `display: swap` to prevent FOIT (Flash of Invisible Text).
+
+---
+
+## Supported Locales
+
+The application currently supports **15 languages** across LTR and RTL scripts:
+
+| Code | Language | Native Name | Direction | Font |
+|------|----------|-------------|-----------|------|
+| `en` | English | English | LTR | Raleway |
+| `ar` | Arabic | العربية | RTL | Cairo |
+| `cs` | Czech | Čeština | LTR | Raleway |
+| `de` | German | Deutsch | LTR | Raleway |
+| `es` | Spanish | Español | LTR | Raleway |
+| `fr` | French | Français | LTR | Raleway |
+| `he` | Hebrew | עברית | RTL | Heebo |
+| `hu` | Hungarian | Magyar | LTR | Raleway |
+| `it` | Italian | Italiano | LTR | Raleway |
+| `ja` | Japanese | 日本語 | LTR | Raleway |
+| `nl` | Dutch | Nederlands | LTR | Raleway |
+| `pl` | Polish | Polski | LTR | Raleway |
+| `pt` | Portuguese | Português | LTR | Raleway |
+| `ru` | Russian | Русский | LTR | Raleway |
+| `zh` | Chinese (Simplified) | 简体中文 | LTR | Raleway |
+
+All locales are configured in `platform/packages/i18n/src/config.ts` with metadata and direction detection.
+
+---
+
+## Adding a New Language
+
+**Shipping a supported locale in your app** (one of the 15): add it to `i18n.locales` in
+`app.config.ts` and add `packages/messages/<locale>.json` with your namespaces translated (and
+its loader line in `packages/messages/index.ts`). `bun run check:i18n` lists any missing key.
+
+**Adding a locale to the platform** (platform maintainers):
+
+### Step 1: Create the translation file
+
+Copy `platform/packages/i18n/messages/en.json` to `platform/packages/i18n/messages/fr.json` and translate all values, and add its loader to `platformMessages` in `platform/packages/i18n/src/messages.ts`.
+
+### Step 2: Register the locale
+
+In `platform/packages/i18n/src/config.ts`, add it to `allLocales` and `localeMetadata`:
+
+```diff
+-export const allLocales = ["en"] as const;
++export const allLocales = ["en", "fr"] as const;
+
+ export const localeMetadata: Record<Locale, { name: string; nativeName: string; dir: "ltr" | "rtl" }> = {
+   en: { name: "English", nativeName: "English", dir: "ltr" },
++  fr: { name: "French", nativeName: "Français", dir: "ltr" },
+ };
+```
+
+That's it. No other code changes are required. The language selector will automatically show the new language, routing will include `/fr/...` paths, and the middleware will detect and persist the locale.
+
+### For RTL Languages
+
+If the language is RTL (Arabic, Hebrew, etc.), add its entry with `dir: "rtl"`:
+
+```ts
+ar: { name: "Arabic", nativeName: "العربية", dir: "rtl" },
+```
+
+The `getLocaleDirection()` function and `<html dir>` attribute will handle layout direction automatically. However, a CSS audit of directional classes should be done before shipping RTL support.
+
+---
+
+## Formatting
+
+### Dates, Numbers, and Currency
+
+next-intl provides `useFormatter()` that wraps `Intl` APIs with the current locale:
+
+```tsx
+import { useFormatter } from "next-intl";
+
+function MyComponent() {
+  const format = useFormatter();
+
+  format.dateTime(new Date(), { dateStyle: "medium", timeStyle: "short" });
+  format.number(1234.5);                                    // "1,234.5" (en)
+  format.number(29.99, { style: "currency", currency: "USD" });
+  format.relativeTime(new Date());                          // "2 hours ago"
+}
+```
+
+### Existing Utilities
+
+`formatBytes()` in `apps/web/src/lib/format.ts` is kept as-is since byte units are universal across locales. For locale-sensitive number formatting, prefer `useFormatter().number()`.
+
+---
+
+## SEO & Metadata
+
+### Localized Metadata
+
+Each page supports `generateMetadata()` for localized titles, descriptions, OpenGraph and Twitter cards:
+
+```tsx
+export async function generateMetadata({ params }): Promise<Metadata> {
+  const { locale } = await params;
+  const t = await getTranslations({ locale, namespace: "metadata" });
+
+  return {
+    title: t("signIn.title"),
+    description: t("signIn.description"),
+    openGraph: {
+      type: "website",
+      locale,
+      title: t("signIn.title"),
+      description: t("signIn.description"),
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: t("signIn.title"),
+      description: t("signIn.description"),
+    },
+  };
+}
+```
+
+### Alternate Language Links (hreflang)
+
+The `HreflangLinks` component in `@web-app-starter/i18n` generates SEO-friendly alternate language links for all 15 supported locales plus an `x-default` fallback:
+
+```tsx
+<head>
+  <HreflangLinks
+    locale={locale}
+    pathname={pathname}
+    siteUrl={process.env.NEXT_PUBLIC_SITE_URL}
+  />
+</head>
+```
+
+Rendered output includes:
+```html
+<link rel="alternate" hreflang="en" href="https://example.com/en/sign-in" />
+<link rel="alternate" hreflang="fr" href="https://example.com/fr/sign-in" />
+<link rel="alternate" hreflang="ar" href="https://example.com/ar/sign-in" />
+<!-- ... 12 more locales ... -->
+<link rel="alternate" hreflang="x-default" href="https://example.com/en/sign-in" />
+```
+
+### Sitemaps and Robots.txt
+
+Each app includes locale-aware sitemap generation:
+
+```ts
+// apps/web/src/app/sitemap.ts
+export default function sitemap(): MetadataRoute.Sitemap {
+  const routes = ["/sign-in", "/sign-up", "/dashboard"];
+  const entries = locales.flatMap((locale) =>
+    routes.map((route) => ({
+      url: `${siteUrl}/${locale}${route}`,
+      alternates: {
+        languages: Object.fromEntries(
+          locales.map((l) => [l, `${siteUrl}/${l}${route}`])
+        ),
+      },
+    }))
+  );
+  return entries;
+}
+```
+
+The `robots.txt` references the sitemap:
+```
+Sitemap: https://example.com/sitemap.xml
+```
+
+---
+
+## Testing
+
+### Locale-Aware Tests
+
+All component tests use locale-prefixed URLs following the always-prefix routing strategy:
+
+```tsx
+// ✅ Correct
+await page.goto("/en/dashboard");
+await page.goto("/en/sign-in");
+
+// ❌ Avoid
+await page.goto("/dashboard");  // Missing locale prefix
+```
+
+### RTL Layout Tests
+
+Comprehensive E2E tests verify RTL layout mirroring for Arabic and Hebrew:
+
+```tsx
+test("Arabic page has correct direction and font", async ({ page }) => {
+  await page.goto("/ar/sign-in");
+
+  // Verify RTL direction
+  const htmlDir = await page.locator("html").getAttribute("dir");
+  expect(htmlDir).toBe("rtl");
+
+  // Verify locale
+  const htmlLang = await page.locator("html").getAttribute("lang");
+  expect(htmlLang).toBe("ar");
+
+  // Verify Cairo font is applied
+  const computedFont = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--font-sans")
+  );
+  expect(computedFont).toBeTruthy();
+});
+```
+
+### Locale Persistence Tests
+
+E2E tests verify cross-device sync behavior:
+
+```tsx
+test("authenticated user syncs locale across sign-out/sign-in", async ({ page }) => {
+  // Sign in and change locale
+  await page.goto("/en/sign-in");
+  // ... perform login ...
+  // ... change to French via LocaleSwitcher ...
+
+  // Sign out
+  // ... perform logout ...
+
+  // Sign back in
+  // ... perform login ...
+
+  // Verify French persists
+  await expect(page).toHaveURL(/\/fr\//);
+});
+```
