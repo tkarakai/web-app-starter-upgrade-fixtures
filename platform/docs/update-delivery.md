@@ -19,6 +19,9 @@ Pull requests, Workflows and Issues **write** permissions. Store its ID in repos
 
 Without the App, the workflow uses `GITHUB_TOKEN`. Allow GitHub Actions to create pull requests
 in repository Actions settings. Its PRs may require **Approve and run** before CI starts.
+App-owned CI callers need `contents: read` and `pull-requests: read` for change detection,
+and the `ready_for_review` pull-request event to run browser checks after finishing a draft.
+The v2 `v2-ci-callers.ts` codemod updates the standard callers while preserving custom grants.
 Workflow-file changes instead produce an issue with the manual upgrade command because the
 fallback token cannot push them. A configured App with a missing/invalid key fails visibly;
 it does not silently fall back to a different identity.
@@ -73,7 +76,9 @@ A separate job mints the repository-scoped App token after verification finishes
 the source/target identities, report and patch digests, and exact Git tree. Only inline workflow
 code, pinned actions and Git run with that token. It applies the patch, commits with hooks
 disabled, and pushes normally; it runs no app or downloaded scripts. Artifacts are retained for
-14 days. Your normal PR CI runs again on the resulting commit.
+14 days. The separate `platform-verification-report` artifact retains the JSON/Markdown report
+even if a check fails before delivery packaging; inspect its failed step and diagnostic. Your
+normal PR CI runs again on the resulting commit.
 
 The source defaults to public `tkarakai/web-app-starter`. Forks or rehearsal apps can explicitly
 set `PLATFORM_SOURCE_REPOSITORY` to another trusted **public** release repository; this selects

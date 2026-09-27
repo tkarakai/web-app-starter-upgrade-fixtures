@@ -6,7 +6,7 @@
 
 ```bash
 # Start core apps + Convex (recommended)
-bun run dev                  # Uses platform/tooling/dev-start.sh
+bun run dev                  # Starts installed core apps; skips apps removed during adoption
 
 # Start a specific app + Convex (ports: runtime.ports in app.config.ts)
 bun run dev:web              # Convex + web app
@@ -152,5 +152,3 @@ bun run dev:stop && bun run dev:web
 # Ensure you pass the glob as second arg to convexTest()
 # convexTest(schema, import.meta.glob("./**/*.*s"))
 ```
-
-<!-- Public update-workflow patch fixture, not a product release. -->

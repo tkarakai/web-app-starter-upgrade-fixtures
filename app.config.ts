@@ -15,7 +15,7 @@
  */
 import type { AppConfig } from "./platform/packages/app-config/src/schema.ts";
 
-const productName = "Workflow Conflict Fixture";
+const productName = "Web App Starter";
 const supportEmail = "support@example.com";
 
 const appConfig = {
@@ -47,7 +47,7 @@ const appConfig = {
     },
     // CSS custom properties from platform/packages/design-system/tokens/, e.g.
     // { "--primary": "oklch(0.55 0.2 260)" }.
-    tokenOverrides: { "--radius": "0.75rem" },
+    tokenOverrides: {},
     email: {
       lang: "en",
       palette: {

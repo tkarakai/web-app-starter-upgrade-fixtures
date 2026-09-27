@@ -20,7 +20,9 @@ version. Release-specific compatibility and deployment steps are listed explicit
   ready PRs, review gates become drafts, and failures or new majors become issues. GitHub App
   tokens trigger ordinary PR CI; fallback workflow-file changes need a manual upgrade.
   Draft reports relocate safely to a new checkout and repeat verification without repeating
-  completed codemods. See [update delivery](docs/update-delivery.md).
+  completed codemods, restoring release objects from the trusted source in fresh clones.
+  Failed checks retain their report and diagnostics. Default dev startup skips removed apps.
+  See [update delivery](docs/update-delivery.md).
 
 - `bun run platform:check-updates` reports published updates, major releases for review and
   advisories affecting the installed version. Contracts CI independently runs
@@ -53,6 +55,12 @@ version. Release-specific compatibility and deployment steps are listed explicit
   optional-app detection uses the selected source commit, including during rollback.
 
 ### Action required
+
+- Update app-owned CI callers with
+  `./platform/tooling/node-ts.sh platform/tooling/codemods/v2-ci-callers.ts`.
+  It grants the change detector explicit read access and runs browser CI when a draft becomes
+  ready. Custom permission denials or complex triggers require review. **Done when:** its
+  `--check` passes and a ready update PR runs all applicable checks, including E2E.
 
 - **Who is affected:** apps with customized account-security wording under
   `dashboard.changePassword`, `dashboard.twoFactor`, `dashboard.passkeys` or `dashboard.sessions`.
