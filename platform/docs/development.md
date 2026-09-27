@@ -152,3 +152,5 @@ bun run dev:stop && bun run dev:web
 # Ensure you pass the glob as second arg to convexTest()
 # convexTest(schema, import.meta.glob("./**/*.*s"))
 ```
+
+<!-- Public update-workflow patch fixture, not a product release. -->

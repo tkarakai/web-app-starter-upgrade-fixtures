@@ -498,6 +498,18 @@
         "tsconfig.json",
         "turbo.json"
       ]
+    },
+    {
+      "version": "2.0.1",
+      "previous": "2.0.0",
+      "supportedBaseline": ">=2.0.0 <3.0.0",
+      "codemods": [],
+      "migrations": [],
+      "env": [],
+      "removedFiles": [],
+      "renamedExports": [],
+      "dependencyFloors": [],
+      "changedSeams": []
     }
   ]
 }
