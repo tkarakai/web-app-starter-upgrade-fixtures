@@ -22,7 +22,7 @@
     "dev:admin": "./platform/tooling/dev-start.sh --app=admin",
     "dev:landing": "./platform/tooling/dev-start.sh --app=landing",
     "dev:storybook": "./platform/tooling/dev-start.sh --app=storybook",
-    "dev:landing-static": "turbo dev --filter=@repo/landing-static",
+    "dev:landing-static": "./platform/tooling/dev-start.sh --app=landing-static",
     "ensure-local": "./platform/tooling/ensure-local-deps.sh",
     "dev:stop": "./platform/tooling/dev-stop.sh",
     "dev:stop:convex": "./platform/tooling/dev-stop-convex.sh",
@@ -85,7 +85,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "convex": "1.45.0",
-    "next": "16.3.5",
+    "next": "16.3.6",
     "typescript-eslint": "8.70.0"
   },
   "devDependencies": {

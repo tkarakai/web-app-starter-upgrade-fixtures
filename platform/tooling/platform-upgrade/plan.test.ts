@@ -4,6 +4,35 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { gitText } from "./git.ts";
 import { fixture, write, git } from "./fixtures.ts";
+import { createReport } from "./report.ts";
+import { verifyDependencies } from "./verify.ts";
+test("upgrades deliver every deployment workflow's Ops recorder with static landing support", async () => {
+  const f = fixture();
+  const root = new URL("../../../", import.meta.url);
+  const legacy = ".github/scripts/record-ops.cjs";
+  write(f.app, legacy, "// Existing app-owned recorder\n");
+  git(f.app, "add", "-A"); git(f.app, "commit", "-qm", "keep existing recorder");
+  const helpers = new Map<string, string>();
+  const workflows = ["staging", "production", "rollback"].map(env => `.github/workflows/platform-cd-${env}.yml`);
+  for (const workflow of workflows) {
+    const content = fs.readFileSync(new URL(workflow, root), "utf8");
+    write(f.source, workflow, content);
+    const helper = content.match(/const record = require\('\.\/(.+?)'\)/)?.[1];
+    assert(helper, `Missing recorder in ${workflow}`);
+    helpers.set(helper, fs.readFileSync(new URL(helper, root), "utf8"));
+  }
+  for (const [helper, content] of helpers) write(f.source, helper, content);
+  f.publish("2.0.1");
+  const { payloads } = await f.plan("2.0.1");
+  for (const file of [...workflows, ...helpers.keys()]) {
+    const delivered = payloads.find(row => row.path === file);
+    assert(delivered && !("remove" in delivered), `Upgrade omitted ${file}`);
+    assert.equal(delivered.content.toString(), fs.readFileSync(path.join(f.source, file), "utf8"));
+  }
+  // The renamed helper is delivered wholesale; an old app-owned copy can remain
+  // without being used or overwritten by the new deployment workflows.
+  assert(!payloads.some(row => row.path === legacy));
+});
 test("read-only planning merges app customization, removes retired platform files and preserves app/index/refs", async () => {
   const f = fixture();
   write(f.source, "app.config.ts", fs.readFileSync(path.join(f.source, "app.config.ts"), "utf8").replace("'old'", "'new'"));
@@ -38,6 +67,17 @@ test("patches, removed env usage, dynamic env and new secrets produce specific r
   assert.deepEqual(plan.gates.map(row => row.kind).sort(), ["dynamic-env", "new-secret", "patch", "removed-env"]);
   assert.match(plan.patches[0].baseToApp, /business fix/); assert.equal(plan.patches[0].absorbed, false);
 });
+test("optional new deployment secrets are reported without blocking apps that do not use them", async () => {
+  const f = fixture();
+  write(f.app, "apps/web/env.ts", "export const value = process.env[key];\n");
+  git(f.app, "add", "-A"); git(f.app, "commit", "-qm", "existing dynamic lookup");
+  const secret = { name: "VERCEL_PROJECT_ID_LANDING_STATIC", kind: "new" as const, secret: true, required: false };
+  f.publish("2.0.1", entry => { entry.env.push(secret); });
+  const { plan } = await f.plan("2.0.1");
+  assert.deepEqual(plan.environment.changes, [{ ...secret, replacement: undefined }]);
+  assert.equal(plan.environment.scan.dynamic.length, 1);
+  assert.deepEqual(plan.gates, []);
+});
 test("optional app deletion stays deleted, while a deleted required seam needs review", async () => {
   const f = fixture();
   f.manifest.seams.push({ id: "optional", path: "apps/landing/package.json", hooks: [], optionalApp: "apps/landing" });
@@ -53,6 +93,23 @@ test("floors raise a lower same-major app declaration without lowering a higher 
   assert.equal(JSON.parse(pkg.content.toString()).dependencies.example, "^2.1.0");
   write(f.app, "package.json", '{"name":"app","dependencies":{"example":"^2.5.0"}}\n'); git(f.app, "add", "-A"); git(f.app, "commit", "-qm", "newer app dependency");
   const higher = await f.plan("2.0.1"); assert(!higher.payloads.some(row => row.path === "package.json"));
+});
+test("package conflicts retain dependency floors for verification after review", async () => {
+  const f = fixture();
+  write(f.app, "package.json", '{"name":"business","dependencies":{"example":"^2.0.0"}}\n');
+  git(f.app, "add", "-A"); git(f.app, "commit", "-qm", "app package customization");
+  write(f.source, "package.json", '{"name":"platform","dependencies":{"example":"^2.1.0"}}\n');
+  f.publish("2.0.1", entry => { entry.dependencyFloors.push({ path: "package.json", name: "example", minimum: "2.1.0" }); });
+  const { plan } = await f.plan("2.0.1");
+  assert(plan.gates.some(row => row.id === "seam:package.json"));
+  assert(plan.gates.some(row => row.id === "dependency:package.json:example"));
+  const report = createReport(plan, {});
+  // A reviewer may resolve the text conflict while retaining an old dependency.
+  // Acknowledging the review must not bypass the installed-version check.
+  write(f.app, "node_modules/example/package.json", '{"version":"2.0.0"}');
+  assert.throws(() => verifyDependencies(report), /below its floor or missing: example/);
+  write(f.app, "node_modules/example/package.json", '{"version":"2.1.0"}');
+  assert.doesNotThrow(() => verifyDependencies(report));
 });
 test("seam conflicts remain labeled, and dirty or mismatched baselines cannot be planned", async () => {
   const f = fixture(); write(f.source, "app.config.ts", "export const brand = 'upstream change';\n"); f.publish("2.0.1");
